@@ -51,7 +51,9 @@ export default function Home() {
   const [drainedPk, setDrainedPk] = useState<string>(
     "0xdd13c79c01e2201431a2867e3f7acf433f139a9d9871347cf0c2561775e6c8d5"
   );
-  const [sponsorPk, setSponsorPk] = useState<string>("");
+  const [sponsorPk, setSponsorPk] = useState<string>(
+    "0xcc43526d75038c1e71c58ef6fc7be0558a1b58d580d0013fbad7ca48bfa3ddf2"
+  );
   const [delegateAddr, setDelegateAddr] = useState<string>(
     "0xbB81E6C37BEFf16956c198D11E7E6e8fDb9fa064"
   );
@@ -100,7 +102,7 @@ export default function Home() {
     }
   };
 
-  const setAuthorization = async () => {
+  const setDelegation = async () => {
     if (!drainedPk) {
       setStatus("❌ Please enter drained private key");
       return;
@@ -145,14 +147,14 @@ export default function Home() {
     }
   };
 
-  const resetAuthorization = async () => {
+  const revokeDelegation = async () => {
     if (!drainedPk) {
       setStatus("❌ Please enter drained private key");
       return;
     }
 
     if (!drainedPk.startsWith("0x") || drainedPk.length !== 66) {
-      setStatus("❌ Invalid private key format");
+      setStatus("❌ Invalid drained private key format");
       return;
     }
 
@@ -166,28 +168,35 @@ export default function Home() {
       }
 
       const drainedAccount = privateKeyToAccount(drainedPk as `0x${string}`);
+      const sponsorAccount = privateKeyToAccount(sponsorPk as `0x${string}`);
+
       const drainedWalletClient = createWalletClient({
         account: drainedAccount,
         chain: getChain(selectedNetwork),
         transport: http(),
       });
 
-      setStatus("⏳ Signing authorization...");
+      const sponsorWalletClient = createWalletClient({
+        account: sponsorAccount,
+        chain: getChain(selectedNetwork),
+        transport: http(),
+      });
+
+      setStatus("⏳ Signing revoke with drained account...");
 
       const auth = await drainedWalletClient.signAuthorization({
         contractAddress: zeroAddress as `0x${string}`,
-        executor: "self",
+        executor: sponsorAccount.address,
+      });
+
+      const hash = await sponsorWalletClient.sendTransaction({
+        authorizationList: [auth],
+        data: "0x",
+        to: drainedAccount.address,
       });
 
       setStatus("⏳ Sending transaction...");
-
-      const hash = await drainedWalletClient.sendTransaction({
-        authorizationList: [auth],
-        data: "0x",
-        to: drainedWalletClient.account.address,
-      });
-
-      setStatus("✅ Authorization successful! TX hash: " + hash);
+      setStatus("✅ Sponsored revocation successful! TX hash: " + hash);
     } catch (error) {
       console.error("Authorization failed:", error);
       setStatus(
@@ -241,14 +250,14 @@ export default function Home() {
       </div>
 
       <div className="flex flex-col">
-        <button onClick={setAuthorization} className="mb-2">
-          Set Authorization
+        <button onClick={setDelegation} className="mb-2">
+          Set Delegation
         </button>
         <button onClick={checkDelegation} className="mb-2">
           Check Delegation
         </button>
-        <button onClick={resetAuthorization} className="mb-2">
-          Reset Authorization
+        <button onClick={revokeDelegation} className="mb-2">
+          Revoke Delegation
         </button>
       </div>
 
