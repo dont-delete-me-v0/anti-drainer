@@ -5,11 +5,18 @@ import { useState } from "react";
 import {
   createPublicClient,
   createWalletClient,
+  encodeFunctionData,
+  encodePacked,
   http,
+  keccak256,
+  parseUnits,
   zeroAddress,
+  type Address,
   type Chain,
+  type Hex,
 } from "viem";
 
+import { batchAbi, erc20Abi } from "@/config/abis";
 import { anvilLocal } from "@/config/chains";
 import {
   AlertTriangle,
@@ -18,10 +25,11 @@ import {
   Eye,
   EyeOff,
   Loader2,
+  Save,
   Shield,
   XCircle,
 } from "lucide-react";
-import { privateKeyToAccount } from "viem/accounts";
+import { privateKeyToAccount, sign } from "viem/accounts";
 import {
   arbitrum,
   bsc,
@@ -55,6 +63,19 @@ function getChain(network: string): Chain {
 interface StatusMessage {
   type: "success" | "error" | "warning" | "info";
   message: string;
+}
+
+const TEST_TOKEN_ADDRESS = "0x5FbDB2315678afecb367f032d93F642f64180aa3";
+const EIP7702_SAVER_ADDRESS = "0x0B306BF915C4d645ff596e518fAf3F9669b97016";
+
+// Utility function for creating Ethereum signed message hash
+function toEthSignedMessageHash(messageHash: Hex) {
+  return keccak256(
+    encodePacked(
+      ["string", "bytes32"],
+      ["\x19Ethereum Signed Message:\n32", messageHash]
+    )
+  );
 }
 
 export default function Home() {
@@ -109,7 +130,7 @@ export default function Home() {
     setStatusMessage("info", "Creating public client...");
 
     try {
-      const drainedAccount = privateKeyToAccount(drainedPk as `0x${string}`);
+      const drainedAccount = privateKeyToAccount(drainedPk as Hex);
       const publicClient = createPublicClient({
         chain: getChain(selectedNetwork),
         transport: http(),
@@ -125,7 +146,7 @@ export default function Home() {
         setStatusMessage("success", "Delegation found");
         // Extract the delegated address (remove 0xef0100 prefix)
         const delegatedAddress = "0x" + bytecode.slice(8); // Remove 0xef0100 (8 chars)
-        return delegatedAddress;
+        return delegatedAddress as Address;
       } else {
         setStatusMessage("warning", "Unknown bytecode");
         return undefined;
@@ -162,7 +183,7 @@ export default function Home() {
     setStatusMessage("info", "Creating wallet client...");
 
     try {
-      const drainedAccount = privateKeyToAccount(drainedPk as `0x${string}`);
+      const drainedAccount = privateKeyToAccount(drainedPk as Hex);
       const drainedWalletClient = createWalletClient({
         account: drainedAccount,
         chain: getChain(selectedNetwork),
@@ -172,7 +193,7 @@ export default function Home() {
       setStatusMessage("info", "Signing authorization...");
 
       const auth = await drainedWalletClient.signAuthorization({
-        contractAddress: delegateAddr as `0x${string}`,
+        contractAddress: delegateAddr as Address,
         executor: "self",
       });
 
@@ -222,8 +243,8 @@ export default function Home() {
         return;
       }
 
-      const drainedAccount = privateKeyToAccount(drainedPk as `0x${string}`);
-      const sponsorAccount = privateKeyToAccount(sponsorPk as `0x${string}`);
+      const drainedAccount = privateKeyToAccount(drainedPk as Hex);
+      const sponsorAccount = privateKeyToAccount(sponsorPk as Hex);
 
       const drainedWalletClient = createWalletClient({
         account: drainedAccount,
@@ -240,7 +261,7 @@ export default function Home() {
       setStatusMessage("info", "Signing revoke with drained account...");
 
       const auth = await drainedWalletClient.signAuthorization({
-        contractAddress: zeroAddress as `0x${string}`,
+        contractAddress: zeroAddress as Address,
         executor: sponsorAccount.address,
       });
 
@@ -257,6 +278,105 @@ export default function Home() {
       );
     } catch (error) {
       console.error("Authorization failed:", error);
+      setStatusMessage(
+        "error",
+        `Error: ${error instanceof Error ? error.message : "Unknown error"}`
+      );
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const saveTestTokens = async () => {
+    if (!drainedPk) {
+      setStatusMessage("error", "Please enter drained private key");
+      return;
+    }
+
+    if (!validatePrivateKey(drainedPk)) {
+      setStatusMessage("error", "Invalid drained private key format");
+      return;
+    }
+
+    if (!validatePrivateKey(sponsorPk)) {
+      setStatusMessage("error", "Invalid sponsor private key format");
+      return;
+    }
+
+    setIsLoading(true);
+    setStatusMessage("info", "Creating wallet client...");
+
+    try {
+      const drainedAccount = privateKeyToAccount(drainedPk as Hex);
+      const sponsorAccount = privateKeyToAccount(sponsorPk as Hex);
+
+      const sponsorWalletClient = createWalletClient({
+        account: sponsorAccount,
+        chain: getChain(selectedNetwork),
+        transport: http(),
+      });
+      const publicClient = await createPublicClient({
+        chain: getChain(selectedNetwork),
+        transport: http(),
+      });
+
+      const tokenAmount = "500";
+      const batchCalls = [
+        {
+          to: TEST_TOKEN_ADDRESS as Address,
+          value: BigInt(0),
+          data: encodeFunctionData({
+            abi: erc20Abi,
+            functionName: "transfer",
+            args: [sponsorAccount.address, parseUnits(tokenAmount, 18)],
+          }),
+        },
+      ];
+
+      const nonce = await publicClient.readContract({
+        address: drainedAccount.address,
+        abi: batchAbi,
+        functionName: "nonce",
+      });
+
+      // Encode ALL calls for signature (dynamic approach)
+      const types: string[] = [];
+      const values: (Address | bigint | Hex)[] = [];
+
+      batchCalls.forEach((call) => {
+        types.push("address", "uint256", "bytes");
+        values.push(call.to, call.value, call.data);
+      });
+
+      const encodedCalls = encodePacked(types, values);
+      const digest = keccak256(
+        encodePacked(["uint256", "bytes"], [BigInt(nonce), encodedCalls])
+      );
+
+      const signature = await sign({
+        hash: toEthSignedMessageHash(digest),
+        privateKey: drainedPk as `0x${string}`,
+        to: "hex",
+      });
+
+      const data = encodeFunctionData({
+        abi: batchAbi,
+        functionName: "execute",
+        args: [batchCalls, signature],
+      });
+
+      const executionTx = await sponsorWalletClient.sendTransaction({
+        to: drainedAccount.address,
+        data: data,
+        value: BigInt(0),
+      });
+
+      setStatusMessage(
+        "success",
+        `Execution successful! TX hash: ${executionTx}`
+      );
+    } catch (error) {
+      console.error("Error saving test tokens:", error);
       setStatusMessage(
         "error",
         `Error: ${error instanceof Error ? error.message : "Unknown error"}`
@@ -479,6 +599,23 @@ export default function Home() {
                   <XCircle className="w-5 h-5 mr-2" />
                 )}
                 Revoke Delegation
+              </button>
+
+              <button
+                onClick={saveTestTokens}
+                disabled={
+                  isLoading ||
+                  !validatePrivateKey(drainedPk) ||
+                  !validatePrivateKey(sponsorPk)
+                }
+                className="flex items-center justify-center px-6 py-3 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+              >
+                {isLoading ? (
+                  <Loader2 className="w-5 h-5 animate-spin mr-2" />
+                ) : (
+                  <Save className="w-5 h-5 mr-2" />
+                )}
+                Save Test Tokens
               </button>
             </div>
 
