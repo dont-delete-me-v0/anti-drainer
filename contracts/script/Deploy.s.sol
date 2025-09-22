@@ -9,7 +9,12 @@ contract DeployScript is Script {
     function run() external {
         uint256 deployerPrivateKey = 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
         vm.startBroadcast(deployerPrivateKey);
-        TestToken testToken = new TestToken();
+        TestPermitToken testToken = new TestPermitToken(
+            "TestPermitToken",
+            "TPT",
+            18,
+            1000000000000000000000000000
+        );
         console.log("TestToken deployed at:", address(testToken));
         console.log("\n=== Deployment Summary ===");
         console.log("TestToken:", address(testToken));

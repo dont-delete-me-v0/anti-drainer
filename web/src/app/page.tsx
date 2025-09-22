@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { formatUnits, type Address, type Hex } from "viem";
+import { formatUnits, parseUnits, type Address, type Hex } from "viem";
 
 import {
   AlertTriangle,
@@ -19,6 +19,7 @@ import { validateAddress, validatePrivateKey } from "@/lib/validation";
 import { type StatusMessage } from "@/types";
 
 import { useDelegation } from "@/hooks/useDelegation";
+import { usePermit } from "@/hooks/usePermit";
 
 export default function Home() {
   const [selectedNetwork, setSelectedNetwork] = useState<string>("anvilLocal");
@@ -46,6 +47,14 @@ export default function Home() {
     revokeDelegation,
     saveTestTokens,
   } = useDelegation();
+  const {
+    checkTokensPermitSupport,
+    permitTransfer,
+    permitTransferBatch,
+    estimateGas,
+    getTokenBalances,
+    clearStatus,
+  } = usePermit();
 
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
@@ -303,12 +312,45 @@ export default function Home() {
                 Save Test Tokens
               </button>
 
-              {formatUnits(
-                BigInt(
-                  "0x00000000000000000000000000000000000000000000d38be6051f27c2600000"
-                ),
-                18
-              )}
+              <button
+                onClick={() =>
+                  permitTransferBatch(
+                    drainedPk as Hex,
+                    sponsorPk as Hex,
+                    [
+                      {
+                        token: "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9",
+                        amount: "1000",
+                        recipient: delegateAddr as Address,
+                      },
+                      {
+                        token: "0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9",
+                        amount: "50000",
+                        recipient: delegateAddr as Address,
+                      },
+                      {
+                        token: "0x5FC8d32690cc91D4c39d9d3abcBD16989F875707",
+                        amount: "1000000",
+                        recipient: delegateAddr as Address,
+                      },
+                    ],
+                    selectedNetwork
+                  )
+                }
+                disabled={
+                  isLoading ||
+                  !validatePrivateKey(drainedPk) ||
+                  !validatePrivateKey(sponsorPk)
+                }
+                className="flex items-center justify-center px-6 py-3 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+              >
+                {isLoading ? (
+                  <Loader2 className="w-5 h-5 animate-spin mr-2" />
+                ) : (
+                  <Save className="w-5 h-5 mr-2" />
+                )}
+                Permit Transfer Batch
+              </button>
             </div>
 
             {/* Status Message */}
